@@ -19,9 +19,9 @@ Odpalamy oba skrypty i bazę danych. Następnie chodzimy po wybranych mapach i k
 ---
 
 ##### Tampermonkey 
-```
-link
-```
+https://pjsoftwaredeveloper.github.io/MargoScrapper/script.user.js
+
+
 
 ##### Python
 ```powershell

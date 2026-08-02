@@ -13,7 +13,7 @@ Odpalamy oba skrypty i bazę danych. Następnie chodzimy po wybranych mapach i k
 ## Wymagania
 * Konto Margonem (najlepiej multi by bana nie dostać).
 * Przeglądarka internetowa z zainstalowanym rozszerzeniem **Tampermonkey**.
-* Zainstalowany **Python** (wersja 3.8 lub nowsza).
+* Zainstalowany **Python** (wersja 3.14 lub nowsza).
 * Dowolny serwer bazodanowy **MySQL / MariaDB** (lub dostosowanie kodu Pythona pod SQLite).
 
 ---

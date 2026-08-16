@@ -1,12 +1,12 @@
 // ==UserScript==
-// @name         Margonem DataScrapper
-// @namespace    http://tampermonkey.net/
-// @author       Ronnie Radke
-// @version      2.0
-// @match        https://*.margonem.pl/*
-// @exclude      https://www.margonem.pl/*
-// @run-at       document-end
-// @grant        unsafeWindow
+// @name        Margonem DataScrapper & Battle Addon
+// @namespace   http://tampermonkey.net/
+// @author      Ronnie Radke
+// @version     2.4
+// @match       https://*.margonem.pl/*
+// @exclude     https://www.margonem.pl/*
+// @run-at      document-end
+// @grant       unsafeWindow
 // ==/UserScript==
 
 (function() {
@@ -14,8 +14,11 @@
 
     if (window.self !== window.top) return;
 
+    const winRef = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+    let lastExtractedBattleId = null;
+
     const style = document.createElement('style');
-    style.innerHTML = `
+    style.textContent = `
         #margo-debug-window {
             position: fixed;
             width: 700px;
@@ -140,7 +143,6 @@
             -webkit-user-select: text;
             pointer-events: auto;
         }
-
         #margo-tools-float-btn {
             position: fixed;
             top: 0px;
@@ -174,7 +176,10 @@
     const floatBtn = document.createElement('div');
     floatBtn.id = 'margo-tools-float-btn';
     floatBtn.title = 'MargoTools - Otwórz Debugger';
-    floatBtn.innerHTML = `<div class="icon-inner"></div>`;
+
+    const iconInner = document.createElement('div');
+    iconInner.className = 'icon-inner';
+    floatBtn.appendChild(iconInner);
     document.body.appendChild(floatBtn);
 
     const savedX = localStorage.getItem('margo_debug_pos_x');
@@ -188,55 +193,80 @@
     win.style.top = initialTop;
     win.style.display = 'none';
 
-    win.innerHTML = `
-        <div id="margo-debug-header">
-            <span>MargoTools - Podgląd Danych</span>
-            <button id="margo-debug-close">×</button>
-        </div>
-        <div id="margo-debug-tabs">
-            <button class="margo-debug-tab active" data-target="pane-map">Map</button>
-            <button class="margo-debug-tab" data-target="pane-gateways">Gateways</button>
-            <button class="margo-debug-tab" data-target="pane-npcs">NPCs</button>
-            <button class="margo-debug-tab" data-target="pane-dialogs">Dialogs</button>
-            <button class="margo-debug-tab" data-target="pane-status">Status</button>
-        </div>
-        <div id="margo-debug-content">
-            <div id="pane-map" class="margo-tab-pane active">
-                <div class="margo-pane-header">
-                    <span>Dane Mapy</span>
-                    <button class="margo-copy-btn" data-clipboard="map">Kopiuj</button>
-                </div>
-                <div class="margo-json-viewer" id="view-map">Oczekiwanie na mapę...</div>
-            </div>
-            <div id="pane-gateways" class="margo-tab-pane">
-                <div class="margo-pane-header">
-                    <span>Lista Przejść (Gateways)</span>
-                    <button class="margo-copy-btn" data-clipboard="gateways">Kopiuj</button>
-                </div>
-                <div class="margo-json-viewer" id="view-gateways">Brak przejść...</div>
-            </div>
-            <div id="pane-npcs" class="margo-tab-pane">
-                <div class="margo-pane-header">
-                    <span>Lista NPC</span>
-                    <button class="margo-copy-btn" data-clipboard="npcs">Kopiuj</button>
-                </div>
-                <div class="margo-json-viewer" id="view-npcs">Brak NPC...</div>
-            </div>
-            <div id="pane-dialogs" class="margo-tab-pane">
-                <div class="margo-pane-header">
-                    <span>Ostatnio Zapisany Dialog</span>
-                    <button class="margo-copy-btn" data-clipboard="dialogs">Kopiuj</button>
-                </div>
-                <div class="margo-json-viewer" id="view-dialogs">Brak przechwyconych dialogów...</div>
-            </div>
-            <div id="pane-status" class="margo-tab-pane">
-                <div class="margo-pane-header">
-                    <span>Status i Błędy Połączenia</span>
-                </div>
-                <div class="margo-json-viewer" id="view-status" style="color: #e0e0e0;">Inicjalizowanie skryptu...</div>
-            </div>
-        </div>
-    `;
+    const headerEl = document.createElement('div');
+    headerEl.id = 'margo-debug-header';
+    const headerTitle = document.createElement('span');
+    headerTitle.textContent = 'MargoTools - Podgląd Danych';
+    const closeBtn = document.createElement('button');
+    closeBtn.id = 'margo-debug-close';
+    closeBtn.textContent = '×';
+    headerEl.appendChild(headerTitle);
+    headerEl.appendChild(closeBtn);
+    win.appendChild(headerEl);
+
+    const tabsEl = document.createElement('div');
+    tabsEl.id = 'margo-debug-tabs';
+    const tabConfigs = [
+        { target: 'pane-map', text: 'Map', active: true },
+        { target: 'pane-gateways', text: 'Gateways', active: false },
+        { target: 'pane-npcs', text: 'NPCs', active: false },
+        { target: 'pane-dialogs', text: 'Dialogs', active: false },
+        { target: 'pane-battle-addon', text: 'Battle NPCs', active: false },
+        { target: 'pane-status', text: 'Status', active: false }
+    ];
+    tabConfigs.forEach(cfg => {
+        const tBtn = document.createElement('button');
+        tBtn.className = `margo-debug-tab${cfg.active ? ' active' : ''}`;
+        tBtn.setAttribute('data-target', cfg.target);
+        tBtn.textContent = cfg.text;
+        tabsEl.appendChild(tBtn);
+    });
+    win.appendChild(tabsEl);
+
+    const contentEl = document.createElement('div');
+    contentEl.id = 'margo-debug-content';
+
+    const paneConfigs = [
+        { id: 'pane-map', title: 'Dane Mapy', clip: 'map', initText: 'Oczekiwanie na mapę...' },
+        { id: 'pane-gateways', title: 'Lista Przejść (Gateways)', clip: 'gateways', initText: 'Brak przejść...' },
+        { id: 'pane-npcs', title: 'Lista NPC', clip: 'npcs', initText: 'Brak NPC...' },
+        { id: 'pane-dialogs', title: 'Ostatnio Zapisany Dialog', clip: 'dialogs', initText: 'Brak przechwyconych dialogów...' },
+        { id: 'pane-battle-addon', title: 'Przeciwnici w Walce (Addon)', clip: 'battle-addon', initText: 'Oczekiwanie na walkę...' },
+        { id: 'pane-status', title: 'Status i Błędy Połączenia', clip: null, initText: 'Inicjalizowanie skryptu...' }
+    ];
+
+    paneConfigs.forEach((paneCfg, idx) => {
+        const pane = document.createElement('div');
+        pane.id = paneCfg.id;
+        pane.className = `margo-tab-pane${idx === 0 ? ' active' : ''}`;
+
+        const pHeader = document.createElement('div');
+        pHeader.className = 'margo-pane-header';
+        const pTitle = document.createElement('span');
+        pTitle.textContent = paneCfg.title;
+        pHeader.appendChild(pTitle);
+
+        if (paneCfg.clip) {
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'margo-copy-btn';
+            copyBtn.setAttribute('data-clipboard', paneCfg.clip);
+            copyBtn.textContent = 'Kopiuj';
+            pHeader.appendChild(copyBtn);
+        }
+        pane.appendChild(pHeader);
+
+        const viewer = document.createElement('div');
+        viewer.className = 'margo-json-viewer';
+        viewer.id = `view-${paneCfg.clip || 'status'}`;
+        viewer.textContent = paneCfg.initText;
+        if (paneCfg.id === 'pane-status') {
+            viewer.style.color = '#e0e0e0';
+        }
+        pane.appendChild(viewer);
+
+        contentEl.appendChild(pane);
+    });
+    win.appendChild(contentEl);
     document.body.appendChild(win);
 
     floatBtn.addEventListener('click', (e) => {
@@ -254,7 +284,8 @@
             tabs.forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
             win.querySelectorAll('.margo-tab-pane').forEach(p => p.classList.remove('active'));
-            win.querySelector(`#${tab.getAttribute('data-target')}`).classList.add('active');
+            const targetPane = win.querySelector(`#${tab.getAttribute('data-target')}`);
+            if (targetPane) targetPane.classList.add('active');
         });
     });
 
@@ -268,6 +299,7 @@
         gateways: [],
         npcs: [],
         dialogs: null,
+        'battle-addon': null,
         status: "Skrypt uruchomiony pomyślnie."
     };
 
@@ -278,7 +310,7 @@
         const statusEl = document.getElementById('view-status');
         if (statusEl) {
             statusEl.style.color = isError ? '#ff4444' : '#03dac6';
-            statusEl.innerText = store.status;
+            statusEl.textContent = store.status;
         }
         if (isError) console.error("[MargoTools Error]:", msg);
     }
@@ -288,7 +320,8 @@
             const type = btn.getAttribute('data-clipboard');
             const dataToCopy = store[type];
             if (dataToCopy) {
-                navigator.clipboard.writeText(JSON.stringify(dataToCopy, null, 2));
+                const textVal = typeof dataToCopy === 'string' ? dataToCopy : JSON.stringify(dataToCopy, null, 2);
+                navigator.clipboard.writeText(textVal);
                 alert(`Skopiowano sekcję ${type} do schowka!`);
             } else {
                 alert('Brak danych do skopiowania w tej sekcji.');
@@ -311,8 +344,8 @@
     document.addEventListener('mouseup', () => {
         if (isDragging) {
             isDragging = false;
-            localStorage.setItem('margo_debug_pos_x', parseInt(win.style.left));
-            localStorage.setItem('margo_debug_pos_y', parseInt(win.style.top));
+            localStorage.setItem('margo_debug_pos_x', parseInt(win.style.left, 10));
+            localStorage.setItem('margo_debug_pos_y', parseInt(win.style.top, 10));
         }
     });
 
@@ -334,27 +367,28 @@
             lastMapId: null,
             _getEngine() {
                 try {
-                    const winRef = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
                     return winRef.Engine ? winRef.Engine : null;
                 } catch (e) { return null; }
             },
-            _extractCollisions() {
+            _extractCollisionsString() {
                 try {
                     const engine = this._getEngine();
-                    if (!engine || !engine.map) return null;
+                    if (!engine || !engine.map) return "";
                     const colModule = engine.map.col;
-                    if (!colModule || typeof colModule.check !== 'function') return null;
                     const width = engine.map.d ? engine.map.d.x : 0;
                     const height = engine.map.d ? engine.map.d.y : 0;
-                    if (!width || !height) return null;
-                    const flatCollisions = [];
-                    for (let y = 0; y < height; y++) {
-                        for (let x = 0; x < width; x++) {
-                            flatCollisions.push(colModule.check(x, y));
-                        }
+                    if (!colModule || typeof colModule.check !== 'function' || !width || !height) return "";
+
+                    let rows = [];
+                    for (let t = 0; t < (width * height); t++) {
+                        let cx = t % width;
+                        let cy = Math.floor(t / width);
+                        let checkVal = colModule.check(cx, cy);
+                        let prefix = (cx === 0 && t > 0) ? "\n" : "";
+                        rows.push(prefix + checkVal);
                     }
-                    return JSON.stringify(flatCollisions);
-                } catch (e) { return null; }
+                    return rows.join('');
+                } catch (e) { return ""; }
             },
             async extractWithRetry(retries = 3, delay = 400) {
                 for (let i = 0; i < retries; i++) {
@@ -412,11 +446,17 @@
 
                 return {
                     map: {
-                        id: mapD.id, name: mapD.name, file: mapD.file, bg: mapD.bg,
-                        width: mapD.x, height: mapD.y, pvp: mapD.pvp !== undefined ? mapD.pvp : 0,
-                        water: mapD.water || "", params: mapD.params || {}
+                        id: mapD.id,
+                        name: mapD.name,
+                        file: mapD.file,
+                        bg: mapD.bg,
+                        width: mapD.x,
+                        height: mapD.y,
+                        pvp: mapD.pvp !== undefined ? mapD.pvp : 0,
+                        water: mapD.water || "",
+                        params: mapD.params || {},
+                        collisions: this._extractCollisionsString()
                     },
-                    collisions: this._extractCollisions(),
                     gateways,
                     npcs
                 };
@@ -435,9 +475,15 @@
                                 store.map = data.map;
                                 store.gateways = data.gateways;
                                 store.npcs = data.npcs;
-                                document.getElementById('view-map').innerText = JSON.stringify(data.map, null, 2);
-                                document.getElementById('view-gateways').innerText = JSON.stringify(data.gateways, null, 2);
-                                document.getElementById('view-npcs').innerText = JSON.stringify(data.npcs, null, 2);
+
+                                const viewMapEl = document.getElementById('view-map');
+                                const viewGatewaysEl = document.getElementById('view-gateways');
+                                const viewNpcsEl = document.getElementById('view-npcs');
+
+                                if (viewMapEl) viewMapEl.textContent = JSON.stringify(data.map, null, 2);
+                                if (viewGatewaysEl) viewGatewaysEl.textContent = JSON.stringify(data.gateways, null, 2);
+                                if (viewNpcsEl) viewNpcsEl.textContent = JSON.stringify(data.npcs, null, 2);
+
                                 sendToServer('save_map', data);
                             }
                         }
@@ -451,7 +497,6 @@
             init() {
                 const checkInterval = setInterval(() => {
                     try {
-                        const winRef = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
                         if (winRef._g && !winRef._g.__margo_hooked) {
                             winRef._g.__margo_hooked = true;
                             clearInterval(checkInterval);
@@ -502,7 +547,8 @@
                                                 }
                                             }
                                             store.dialogs = structuredData;
-                                            document.getElementById('view-dialogs').innerText = JSON.stringify(structuredData, null, 2);
+                                            const viewDialogsEl = document.getElementById('view-dialogs');
+                                            if (viewDialogsEl) viewDialogsEl.textContent = JSON.stringify(structuredData, null, 2);
                                             sendToServer('save_dialog', structuredData);
                                         }
                                     } catch (err) {
@@ -519,10 +565,81 @@
                 }, 200);
             }
         },
+        BattleAddon: {
+            init() {
+                setInterval(() => {
+                    try {
+                        if (winRef.Engine && winRef.Engine.battle && winRef.Engine.battle.warriorsList) {
+                            const warriors = winRef.Engine.battle.warriorsList;
+                            winRef.debugWarriors = warriors;
+
+                            let enemyKeys = Object.keys(warriors).filter(id => {
+                                let w = warriors[id];
+                                return w && winRef.Engine.hero && w.team !== winRef.Engine.hero.d.team;
+                            });
+
+                            if (enemyKeys.length > 0) {
+                                let currentBattleSignature = enemyKeys.join('_');
+
+                                if (currentBattleSignature !== lastExtractedBattleId) {
+                                    lastExtractedBattleId = currentBattleSignature;
+
+                                    let battleDataList = [];
+                                    for (let id of enemyKeys) {
+                                        let w = warriors[id];
+                                        const isNpc = w.npc === 1 || Number(w.id) < 0;
+
+                                        if (!isNpc) continue;
+
+                                        battleDataList.push({
+                                            id: w.id,
+                                            originalId: w.originalId || w.id,
+                                            name: w.name,
+                                            lvl: w.lvl,
+                                            prof: w.prof,
+                                            gender: w.gender || "x",
+                                            team: w.team,
+                                            wt: w.wt !== undefined ? w.wt : 0,
+                                            icon: w.icon || "",
+                                            hp: {
+                                                max: w.hp ? w.hp.max : 0,
+                                                cur: w.hp ? w.hp.cur : 0,
+                                                hpp: w.hp ? w.hp.hpp : 100
+                                            },
+                                            stats: {
+                                                ac: w.ac ? w.ac.cur : 0,
+                                                act: w.act ? w.act.cur : 0,
+                                                resfire: w.resfire ? w.resfire.cur : 0,
+                                                resfrost: w.resfrost ? w.resfrost.cur : 0,
+                                                reslight: w.reslight ? w.reslight.cur : 0
+                                            }
+                                        });
+                                    }
+
+                                    const formatted = JSON.stringify(battleDataList, null, 2);
+                                    store['battle-addon'] = battleDataList;
+                                    const viewer = document.getElementById('view-battle-addon');
+                                    if (viewer) viewer.textContent = formatted;
+
+                                    updateStatus(`Wykryto walkę! Przeciwników: ${battleDataList.length}`);
+                                    sendToServer('save_battle_npcs', { enemies: battleDataList });
+                                }
+                            } else {
+                                lastExtractedBattleId = null;
+                            }
+                        }
+                    } catch (err) {
+                        // Ciche wyłapanie błędów pętli
+                    }
+                }, 500);
+            }
+        },
         start() {
             try {
                 this.MapExtractor.init();
                 this.DialogParser.init();
+                this.BattleAddon.init();
+                updateStatus("Wszystkie moduły DataScrapper i Battle Addon zostały zainicjowane.");
             } catch (e) {
                 updateStatus(`Krytyczny błąd startu: ${e.message}`, true);
             }

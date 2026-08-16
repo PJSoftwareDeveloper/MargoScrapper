@@ -3,6 +3,7 @@
 // @namespace   http://tampermonkey.net/
 // @author      Ronnie Radke
 // @version     2.4
+// @description Scrapper do Margonem (maps, npcs, gateways, collisions, dialogs, battle_npcs)
 // @match       https://*.margonem.pl/*
 // @exclude     https://www.margonem.pl/*
 // @run-at      document-end

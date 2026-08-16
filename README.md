@@ -17,6 +17,6 @@ Odpalamy skrypt. Następnie chodzimy po wybranych mapach i klikamy we wszystkie 
 ---
 
 ##### Tampermonkey 
-https://pjsoftwaredeveloper.github.io/MargoScrapper/script.user.js
+https://pjsoftwaredeveloper.github.io/MargoScrapper/src/script.user.js
 
 

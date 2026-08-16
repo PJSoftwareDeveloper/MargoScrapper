@@ -20,3 +20,11 @@ Odpalamy skrypt. Następnie chodzimy po wybranych mapach i klikamy we wszystkie 
 https://pjsoftwaredeveloper.github.io/MargoScrapper/src/script.user.js
 
 
+### Użyte narzędzia
+- MongoDB Atlas
+- PyMongo
+- Render
+- Flask
+- Flask-CORS
+- Gunicorn
+- Tampermonkey

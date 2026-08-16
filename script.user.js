@@ -351,7 +351,7 @@
 
     async function sendToServer(endpoint, payload) {
         try {
-            await fetch(`http://localhost:5000/${endpoint}`, {
+            await fetch(`https://margoscrapper.onrender.com/${endpoint}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)

@@ -15,6 +15,7 @@ db = client['margonem']  # Nazwa bazy danych
 maps_col = db['maps']
 dialogs_col = db['dialogs']
 battle_col = db['battle_npcs']
+shops_col = db['shops']  # Kolekcja dla sklepów
 
 @app.route("/save_map", methods=["POST"])
 def save_map():
@@ -85,6 +86,26 @@ def save_battle_npcs():
 
     except Exception as e:
         print(f"[BŁĄD MONGODB (BATTLE)]: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/save_shop", methods=["POST"])
+def save_shop():
+    req_data = request.json
+    shop_id = req_data.get("id")
+    
+    if not shop_id:
+        return jsonify({"status": "error", "message": "Brak ID sklepu"}), 400
+
+    try:
+        # Używamy ID sklepu jako klucza głównego (zapis lub aktualizacja za pomocą upsert)
+        req_data["_id"] = shop_id
+        shops_col.replace_one({"_id": shop_id}, req_data, upsert=True)
+        
+        print(f"[ZAPISANO SKLEP]: ID {shop_id}")
+        return jsonify({"status": "success", "message": "Sklep został zapisany w MongoDB."})
+
+    except Exception as e:
+        print(f"[BŁĄD MONGODB (SHOP)]: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == "__main__":

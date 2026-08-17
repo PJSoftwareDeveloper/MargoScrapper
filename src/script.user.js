@@ -1,13 +1,13 @@
 // ==UserScript==
-// @name        Margonem DataScrapper & Battle Addon
-// @namespace   http://tampermonkey.net/
-// @author      Ronnie Radke
-// @version     2.4
-// @description Scrapper do Margonem (maps, npcs, gateways, collisions, dialogs, battle_npcs)
-// @match       https://*.margonem.pl/*
-// @exclude     https://www.margonem.pl/*
-// @run-at      document-end
-// @grant       unsafeWindow
+// @name         Margonem DataScrapper
+// @namespace    http://tampermonkey.net/
+// @author       Ronnie Radke
+// @version      2.5
+// @description  Scrapper do Margonem
+// @match        https://*.margonem.pl/*
+// @exclude      https://www.margonem.pl/*
+// @run-at       document-end
+// @grant        unsafeWindow
 // ==/UserScript==
 
 (function() {
@@ -17,6 +17,7 @@
 
     const winRef = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
     let lastExtractedBattleId = null;
+    let lastExtractedShopId = null;
 
     const style = document.createElement('style');
     style.textContent = `
@@ -24,6 +25,8 @@
             position: fixed;
             width: 700px;
             height: 480px;
+            min-width: 400px;
+            min-height: 250px;
             background: rgba(18, 18, 18, 0.95);
             border: 2px solid #bb86fc;
             border-radius: 8px;
@@ -136,14 +139,69 @@
             padding: 8px;
             font-family: monospace;
             font-size: 11px;
-            white-space: pre-wrap;
             overflow-y: auto;
             overflow-x: auto;
             border-radius: 4px;
             user-select: text;
             -webkit-user-select: text;
             pointer-events: auto;
+            line-height: 1.4;
         }
+
+        /* Styl drzewka JSON w stylu VSC */
+        .json-tree {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+        .json-tree li {
+            position: relative;
+            margin: 0;
+            padding-left: 20px;
+        }
+        .json-node-expander {
+            position: absolute;
+            left: 0;
+            top: 1px;
+            width: 12px;
+            height: 12px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            color: #bb86fc;
+            user-select: none;
+            font-weight: bold;
+        }
+        .json-node-expander::before {
+            content: "▼";
+            display: inline-block;
+            transition: transform 0.1s ease;
+        }
+        .json-node.collapsed > .json-node-expander::before {
+            transform: rotate(-90deg);
+        }
+        .json-node.collapsed > .json-children {
+            display: none;
+        }
+        .json-key { color: #9cdcfe; }
+        .json-string { color: #ce9178; }
+        .json-number { color: #b5cea8; }
+        .json-boolean { color: #569cd6; }
+        .json-null { color: #569cd6; }
+        .json-punctuation { color: #d4d4d4; }
+        .json-preview {
+            color: #888;
+            font-style: italic;
+            font-size: 10px;
+            display: none;
+            margin-left: 5px;
+        }
+        .json-node.collapsed > .json-preview {
+            display: inline;
+        }
+
         #margo-tools-float-btn {
             position: fixed;
             top: 0px;
@@ -185,6 +243,10 @@
 
     const savedX = localStorage.getItem('margo_debug_pos_x');
     const savedY = localStorage.getItem('margo_debug_pos_y');
+    const savedW = localStorage.getItem('margo_debug_width');
+    const savedH = localStorage.getItem('margo_debug_height');
+    const savedIsOpen = localStorage.getItem('margo_debug_is_open');
+
     const initialLeft = savedX !== null ? savedX + 'px' : '100px';
     const initialTop = savedY !== null ? savedY + 'px' : '100px';
 
@@ -192,7 +254,11 @@
     win.id = 'margo-debug-window';
     win.style.left = initialLeft;
     win.style.top = initialTop;
-    win.style.display = 'none';
+    if (savedW !== null) win.style.width = savedW + 'px';
+    if (savedH !== null) win.style.height = savedH + 'px';
+
+    // Ustawienie początkowego stanu okna na podstawie zapamiętanej wartości (domyślnie zamknięte, chyba że zapisano 'true')
+    win.style.display = savedIsOpen === 'true' ? 'flex' : 'none';
 
     const headerEl = document.createElement('div');
     headerEl.id = 'margo-debug-header';
@@ -213,6 +279,7 @@
         { target: 'pane-npcs', text: 'NPCs', active: false },
         { target: 'pane-dialogs', text: 'Dialogs', active: false },
         { target: 'pane-battle-addon', text: 'Battle NPCs', active: false },
+        { target: 'pane-shops', text: 'Shops', active: false },
         { target: 'pane-status', text: 'Status', active: false }
     ];
     tabConfigs.forEach(cfg => {
@@ -233,6 +300,7 @@
         { id: 'pane-npcs', title: 'Lista NPC', clip: 'npcs', initText: 'Brak NPC...' },
         { id: 'pane-dialogs', title: 'Ostatnio Zapisany Dialog', clip: 'dialogs', initText: 'Brak przechwyconych dialogów...' },
         { id: 'pane-battle-addon', title: 'Przeciwnici w Walce (Addon)', clip: 'battle-addon', initText: 'Oczekiwanie na walkę...' },
+        { id: 'pane-shops', title: 'Zawartość Sklepu', clip: 'shops', initText: 'Oczekiwanie na otwarcie sklepu...' },
         { id: 'pane-status', title: 'Status i Błędy Połączenia', clip: null, initText: 'Inicjalizowanie skryptu...' }
     ];
 
@@ -259,9 +327,11 @@
         const viewer = document.createElement('div');
         viewer.className = 'margo-json-viewer';
         viewer.id = `view-${paneCfg.clip || 'status'}`;
-        viewer.textContent = paneCfg.initText;
         if (paneCfg.id === 'pane-status') {
             viewer.style.color = '#e0e0e0';
+            viewer.textContent = paneCfg.initText;
+        } else {
+            renderJsonTree(viewer, paneCfg.initText);
         }
         pane.appendChild(viewer);
 
@@ -270,13 +340,107 @@
     win.appendChild(contentEl);
     document.body.appendChild(win);
 
+    function renderJsonTree(container, data) {
+        container.innerHTML = '';
+        if (typeof data === 'string') {
+            container.textContent = data;
+            return;
+        }
+        const treeRoot = document.createElement('ul');
+        treeRoot.className = 'json-tree';
+        treeRoot.appendChild(createNode(null, data));
+        container.appendChild(treeRoot);
+    }
+
+    function createNode(key, value) {
+        const li = document.createElement('li');
+        li.className = 'json-node';
+
+        const isObject = value !== null && typeof value === 'object';
+        const hasChildren = isObject && Object.keys(value).length > 0;
+
+        if (hasChildren) {
+            const expander = document.createElement('span');
+            expander.className = 'json-node-expander';
+            expander.addEventListener('click', (e) => {
+                e.stopPropagation();
+                li.classList.toggle('collapsed');
+            });
+            li.appendChild(expander);
+        }
+
+        if (key !== null) {
+            const keySpan = document.createElement('span');
+            keySpan.className = 'json-key';
+            keySpan.textContent = `"${key}": `;
+            li.appendChild(keySpan);
+        }
+
+        if (isObject) {
+            const isArray = Array.isArray(value);
+            const openBr = document.createElement('span');
+            openBr.className = 'json-punctuation';
+            openBr.textContent = isArray ? '[' : '{';
+            li.appendChild(openBr);
+
+            if (hasChildren) {
+                const preview = document.createElement('span');
+                preview.className = 'json-preview';
+                preview.textContent = isArray ? `Array(${value.length})` : `Object {..}`;
+                li.appendChild(preview);
+
+                const ul = document.createElement('ul');
+                ul.className = 'json-children';
+
+                const keys = Object.keys(value);
+                keys.forEach((k) => {
+                    ul.appendChild(createNode(isArray ? null : k, value[k]));
+                });
+                li.appendChild(ul);
+            }
+
+            const closeBr = document.createElement('span');
+            closeBr.className = 'json-punctuation';
+            closeBr.textContent = isArray ? ']' : '}';
+            if (hasChildren) {
+                closeBr.style.cursor = 'pointer';
+                closeBr.addEventListener('click', () => {
+                    li.classList.toggle('collapsed');
+                });
+            }
+            li.appendChild(closeBr);
+        } else {
+            const valSpan = document.createElement('span');
+            let valType = typeof value;
+            if (value === null) {
+                valSpan.className = 'json-null';
+                valSpan.textContent = 'null';
+            } else if (valType === 'string') {
+                valSpan.className = 'json-string';
+                valSpan.textContent = `"${value}"`;
+            } else if (valType === 'number') {
+                valSpan.className = 'json-number';
+                valSpan.textContent = value;
+            } else if (valType === 'boolean') {
+                valSpan.className = 'json-boolean';
+                valSpan.textContent = value;
+            }
+            li.appendChild(valSpan);
+        }
+
+        return li;
+    }
+
     floatBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        win.style.display = win.style.display === 'none' ? 'flex' : 'none';
+        const isOpen = win.style.display === 'none';
+        win.style.display = isOpen ? 'flex' : 'none';
+        localStorage.setItem('margo_debug_is_open', isOpen ? 'true' : 'false');
     });
 
     document.getElementById('margo-debug-close').addEventListener('click', () => {
         win.style.display = 'none';
+        localStorage.setItem('margo_debug_is_open', 'false');
     });
 
     const tabs = win.querySelectorAll('.margo-debug-tab');
@@ -301,6 +465,7 @@
         npcs: [],
         dialogs: null,
         'battle-addon': null,
+        shops: null,
         status: "Skrypt uruchomiony pomyślnie."
     };
 
@@ -331,22 +496,114 @@
     });
 
     const header = document.getElementById('margo-debug-header');
-    let isDragging = false, startX, startY;
+    let isDragging = false, isResizing = false, resizeDir = '';
+    let startX, startY, startLeft, startTop, startWidth, startHeight;
+    const edgeSize = 8;
+
     header.addEventListener('mousedown', (e) => {
+        if (e.target.id === 'margo-debug-close') return;
         isDragging = true;
-        startX = e.clientX - win.offsetLeft;
-        startY = e.clientY - win.offsetTop;
+        startX = e.clientX;
+        startY = e.clientY;
+        startLeft = win.offsetLeft;
+        startTop = win.offsetTop;
     });
+
+    win.addEventListener('mousemove', (e) => {
+        if (isDragging || isResizing) return;
+        const rect = win.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const w = rect.width;
+        const h = rect.height;
+
+        let dir = '';
+        if (x > w - edgeSize && y > h - edgeSize) dir = 'se';
+        else if (x < edgeSize && y > h - edgeSize) dir = 'sw';
+        else if (x > w - edgeSize && y < edgeSize) dir = 'ne';
+        else if (x < edgeSize && y < edgeSize) dir = 'nw';
+        else if (x > w - edgeSize) dir = 'e';
+        else if (x < edgeSize) dir = 'w';
+        else if (y > h - edgeSize) dir = 's';
+        else if (y < edgeSize) dir = 'n';
+
+        win.style.cursor = dir ? dir + '-resize' : 'default';
+    });
+
+    win.addEventListener('mousedown', (e) => {
+        const rect = win.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const w = rect.width;
+        const h = rect.height;
+
+        let dir = '';
+        if (x > w - edgeSize && y > h - edgeSize) dir = 'se';
+        else if (x < edgeSize && y > h - edgeSize) dir = 'sw';
+        else if (x > w - edgeSize && y < edgeSize) dir = 'ne';
+        else if (x < edgeSize && y < edgeSize) dir = 'nw';
+        else if (x > w - edgeSize) dir = 'e';
+        else if (x < edgeSize) dir = 'w';
+        else if (y > h - edgeSize) dir = 's';
+        else if (y < edgeSize) dir = 'n';
+
+        if (dir) {
+            isResizing = true;
+            resizeDir = dir;
+            startX = e.clientX;
+            startY = e.clientY;
+            startLeft = win.offsetLeft;
+            startTop = win.offsetTop;
+            startWidth = w;
+            startHeight = h;
+            e.preventDefault();
+        }
+    });
+
     document.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
-        win.style.left = (e.clientX - startX) + 'px';
-        win.style.top = (e.clientY - startY) + 'px';
+        if (isDragging) {
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            win.style.left = (startLeft + dx) + 'px';
+            win.style.top = (startTop + dy) + 'px';
+        } else if (isResizing) {
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+
+            if (resizeDir.includes('e')) {
+                win.style.width = Math.max(400, startWidth + dx) + 'px';
+            }
+            if (resizeDir.includes('s')) {
+                win.style.height = Math.max(250, startHeight + dy) + 'px';
+            }
+            if (resizeDir.includes('w')) {
+                const newWidth = Math.max(400, startWidth - dx);
+                if (newWidth > 400) {
+                    win.style.width = newWidth + 'px';
+                    win.style.left = (startLeft + (startWidth - newWidth)) + 'px';
+                }
+            }
+            if (resizeDir.includes('n')) {
+                const newHeight = Math.max(250, startHeight - dy);
+                if (newHeight > 250) {
+                    win.style.height = newHeight + 'px';
+                    win.style.top = (startTop + (startHeight - newHeight)) + 'px';
+                }
+            }
+        }
     });
+
     document.addEventListener('mouseup', () => {
         if (isDragging) {
             isDragging = false;
             localStorage.setItem('margo_debug_pos_x', parseInt(win.style.left, 10));
             localStorage.setItem('margo_debug_pos_y', parseInt(win.style.top, 10));
+        }
+        if (isResizing) {
+            isResizing = false;
+            win.style.cursor = 'default';
+            localStorage.setItem('margo_debug_width', parseInt(win.style.width, 10));
+            localStorage.setItem('margo_debug_height', parseInt(win.style.height, 10));
         }
     });
 
@@ -367,9 +624,7 @@
         MapExtractor: {
             lastMapId: null,
             _getEngine() {
-                try {
-                    return winRef.Engine ? winRef.Engine : null;
-                } catch (e) { return null; }
+                try { return winRef.Engine ? winRef.Engine : null; } catch (e) { return null; }
             },
             _extractCollisionsString() {
                 try {
@@ -433,15 +688,19 @@
                 }
 
                 const npcs = npcsArray.map(npc => {
-                    const data = npc.d || npc;
+                    const data = (npc && npc.d) ? npc.d : (npc || {});
                     return {
                         npc_id: data.id || npc.id || 0,
                         nick: data.nick || npc.nick || "Brak",
                         x: data.x !== undefined ? data.x : (npc.x !== undefined ? npc.x : 0),
                         y: data.y !== undefined ? data.y : (npc.y !== undefined ? npc.y : 0),
-                        type: data.type !== undefined ? data.type : 0,
-                        lvl: data.lvl || 0,
-                        icon: data.icon || ""
+                        type: data.type !== undefined ? data.type : (npc.type !== undefined ? npc.type : 0),
+                        lvl: data.lvl !== undefined ? data.lvl : (npc.lvl !== undefined ? npc.lvl : 0),
+                        icon: data.icon || npc.icon || "",
+                        actions: data.actions !== undefined ? data.actions : (npc.actions !== undefined ? npc.actions : 0),
+                        tpl: data.tpl !== undefined ? data.tpl : (npc.tpl !== undefined ? npc.tpl : 0),
+                        grp: data.grp !== undefined ? data.grp : (npc.grp !== undefined ? npc.grp : 0),
+                        wt: data.wt !== undefined ? data.wt : (npc.wt !== undefined ? npc.wt : 0)
                     };
                 }).filter(n => n.npc_id !== 0);
 
@@ -477,13 +736,9 @@
                                 store.gateways = data.gateways;
                                 store.npcs = data.npcs;
 
-                                const viewMapEl = document.getElementById('view-map');
-                                const viewGatewaysEl = document.getElementById('view-gateways');
-                                const viewNpcsEl = document.getElementById('view-npcs');
-
-                                if (viewMapEl) viewMapEl.textContent = JSON.stringify(data.map, null, 2);
-                                if (viewGatewaysEl) viewGatewaysEl.textContent = JSON.stringify(data.gateways, null, 2);
-                                if (viewNpcsEl) viewNpcsEl.textContent = JSON.stringify(data.npcs, null, 2);
+                                renderJsonTree(document.getElementById('view-map'), data.map);
+                                renderJsonTree(document.getElementById('view-gateways'), data.gateways);
+                                renderJsonTree(document.getElementById('view-npcs'), data.npcs);
 
                                 sendToServer('save_map', data);
                             }
@@ -548,8 +803,7 @@
                                                 }
                                             }
                                             store.dialogs = structuredData;
-                                            const viewDialogsEl = document.getElementById('view-dialogs');
-                                            if (viewDialogsEl) viewDialogsEl.textContent = JSON.stringify(structuredData, null, 2);
+                                            renderJsonTree(document.getElementById('view-dialogs'), structuredData);
                                             sendToServer('save_dialog', structuredData);
                                         }
                                     } catch (err) {
@@ -617,10 +871,8 @@
                                         });
                                     }
 
-                                    const formatted = JSON.stringify(battleDataList, null, 2);
                                     store['battle-addon'] = battleDataList;
-                                    const viewer = document.getElementById('view-battle-addon');
-                                    if (viewer) viewer.textContent = formatted;
+                                    renderJsonTree(document.getElementById('view-battle-addon'), battleDataList);
 
                                     updateStatus(`Wykryto walkę! Przeciwników: ${battleDataList.length}`);
                                     sendToServer('save_battle_npcs', { enemies: battleDataList });
@@ -629,9 +881,32 @@
                                 lastExtractedBattleId = null;
                             }
                         }
-                    } catch (err) {
-                        // Ciche wyłapanie błędów pętli
-                    }
+                    } catch (err) {}
+                }, 500);
+            }
+        },
+        ShopScrapper: {
+            init() {
+                setInterval(() => {
+                    try {
+                        if (winRef.Engine && winRef.Engine.shop && typeof winRef.Engine.shop.getData === 'function') {
+                            const shopData = winRef.Engine.shop.getData();
+                            if (shopData && shopData.id) {
+                                const currentShopId = shopData.id;
+                                if (currentShopId !== lastExtractedShopId) {
+                                    lastExtractedShopId = currentShopId;
+                                    store.shops = shopData;
+
+                                    renderJsonTree(document.getElementById('view-shops'), shopData);
+
+                                    updateStatus(`Wykryto otwarcie sklepu o ID: ${currentShopId}`);
+                                    sendToServer('save_shop', shopData);
+                                }
+                            } else {
+                                lastExtractedShopId = null;
+                            }
+                        }
+                    } catch (err) {}
                 }, 500);
             }
         },
@@ -640,6 +915,7 @@
                 this.MapExtractor.init();
                 this.DialogParser.init();
                 this.BattleAddon.init();
+                this.ShopScrapper.init();
                 updateStatus("Wszystkie moduły DataScrapper i Battle Addon zostały zainicjowane.");
             } catch (e) {
                 updateStatus(`Krytyczny błąd startu: ${e.message}`, true);
